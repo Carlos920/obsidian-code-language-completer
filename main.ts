@@ -5,7 +5,6 @@ import {
 	EditorSuggest,
 	EditorSuggestContext,
 	EditorSuggestTriggerInfo,
-	MarkdownView,
 	Plugin,
 	PluginSettingTab,
 	Setting,
@@ -23,8 +22,8 @@ const DEFAULT_SETTINGS: CodeBlockInserterSettings = {
 };
 
 export default class CodeBlockInserterPlugin extends Plugin {
-	suggester: LanguageSuggester;
-	settings: CodeBlockInserterSettings;
+	suggester!: LanguageSuggester;
+	settings!: CodeBlockInserterSettings;
 
 	async onload() {
 		await this.loadSettings();
@@ -37,8 +36,17 @@ export default class CodeBlockInserterPlugin extends Plugin {
 		this.addCommand({
 			id: "insert-code-block-custom",
 			name: "Insert code block",
-			editorCallback: (editor: Editor, view: MarkdownView) => {
+			editorCallback: (editor: Editor) => {
 				const cursor = editor.getCursor();
+				const selection = editor.getSelection();
+				// wrap selected text
+				if (selection && selection.length > 0) {
+					editor.replaceSelection(
+						`\\\`\\\`\\\`\n${selection}\n\\\`\\\`\\\``,
+					);
+					return;
+				}
+
 				editor.replaceRange("```\n\n```", cursor);
 				editor.setCursor({
 					line: cursor.line,
@@ -73,9 +81,12 @@ class LanguageSuggester extends EditorSuggest<string> {
 	updateLanguages() {
 		const baseLanguages = [
 			"javascript",
+			"typescript",
 			"python",
 			"java",
 			"c",
+			"c++",
+			"c#",
 			"cpp",
 			"csharp",
 			"ruby",
@@ -87,24 +98,39 @@ class LanguageSuggester extends EditorSuggest<string> {
 			"html",
 			"css",
 			"sql",
+			"bat",
+			"batch",
 			"bash",
 			"powershell",
+			"ps1",
 			"markdown",
 			"json",
 			"yaml",
 			"xml",
-			"typescript",
 			"ocaml",
+			"vue",
+			"react",
+			"tsx",
+			"jsx",
+			"shell",
+			"dockerfile",
+			"nginx",
+			"mermaid",
+			"toml",
+			"ini",
+			"plain",
+			"text",
+			"objective-c",
 		];
 
 		const additionalLanguages = this.plugin.settings.additionalLanguages
 			.split(",")
-			.map((lang) => lang.trim())
+			.map((lang) => lang.trim().toLowerCase())
 			.filter((lang) => lang.length > 0);
 
 		this.languages = Array.from(
 			new Set([...additionalLanguages, ...baseLanguages]),
-		);
+		).sort();
 	}
 
 	onTrigger(
@@ -113,7 +139,7 @@ class LanguageSuggester extends EditorSuggest<string> {
 		file: TFile,
 	): EditorSuggestTriggerInfo | null {
 		const line = editor.getLine(cursor.line);
-		const match = line.match(/```(\w*)$/);
+		const match = line.match(/```([^\s`]*)$/);
 
 		if (match) {
 			return {
@@ -130,7 +156,7 @@ class LanguageSuggester extends EditorSuggest<string> {
 	): string[] | Promise<string[]> {
 		const query = context.query.toLowerCase();
 		let suggestions = this.languages.filter((lang) =>
-			lang.startsWith(query),
+			lang.startsWith(query) || lang.includes(query),
 		);
 		// Prioritize last used language
 
@@ -151,23 +177,31 @@ class LanguageSuggester extends EditorSuggest<string> {
 	}
 
 	renderSuggestion(lang: string, el: HTMLElement): void {
-		el.setText(lang);
+		// el.setText(lang);
+		el.createDiv({
+			text: lang,
+			cls: "code-block-language-suggestion",
+		});
 	}
 
-	selectSuggestion(lang: string, evt: MouseEvent | KeyboardEvent): void {
+	async selectSuggestion(lang: string, evt: MouseEvent | KeyboardEvent): Promise<void> {
 		const { editor, start, end } = this.context!;
-		editor.replaceRange(lang, start, end);
+		const nextLine = editor.getLine(start.line + 1);
+		const isCodeEnd = nextLine.trim().startsWith("```");
+		editor.replaceRange(
+			isCodeEnd ? lang + "\n" + nextLine.replace("```", "") : lang,
+			start,
+			end
+		);
+
+		editor.setCursor({
+			line: end.line + 1,
+			ch: editor.getLine(start.line + 1).length,
+		});
 
 		// update last used language
 		this.plugin.settings.lastUsedLanguage = lang;
-		this.plugin.saveSettings();
-
-		// editor.setCursor(end.line, start.ch + lang.length);
-		const newCursorPos = {
-			line: end.line + 1,
-			ch: 0,
-		};
-		editor.setCursor(newCursorPos);
+		await this.plugin.saveSettings();
 	}
 }
 
